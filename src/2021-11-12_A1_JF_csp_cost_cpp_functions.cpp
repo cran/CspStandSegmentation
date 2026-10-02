@@ -6,6 +6,10 @@
 #include <SpatialIndex.h>
 #include <Rcpp.h>
 
+#ifdef _OPENMP
+  #include <omp.h>
+#endif
+
 using namespace Rcpp;
 using namespace lidR;
 
@@ -95,7 +99,9 @@ NumericMatrix eigen_decomposition(S4 las, int k, int ncpu = 1)
 
   SpatialIndex index(las);
 
-#pragma omp parallel for num_threads(ncpu)
+#ifdef _OPENMP
+  #pragma omp parallel for num_threads(ncpu)
+#endif
   for (unsigned int i = 0 ; i < npoints ; i++)
   {
     arma::mat A(k,3);
@@ -117,13 +123,67 @@ NumericMatrix eigen_decomposition(S4 las, int k, int ncpu = 1)
 
     arma::princomp(coeff, score, latent, A);
 
-#pragma omp critical
+#ifdef _OPENMP
+  #pragma omp critical
+#endif
+
 {
   out(i, 0) = latent[0];
   out(i, 1) = latent[1];
   out(i, 2) = latent[2];
   out(i, 3) = coeff[8];
 }
+  }
+
+  return out;
+}
+
+//' Point distance function
+//'
+//' calculates euclidean distances for n dimensions between a matrix of points and a single point
+//'
+//' @param mat matrix with points as rows
+//' @param p point to calculate distances
+//' @param nthreads number of threads to use. If 0 or negative, the maximum number of threads available will be used.
+//'
+//' @return the distances between every row of mat and p
+//' @export p_mat_dist
+//'
+//' @examples
+//' p_mat_dist(as.matrix(cbind(runif(100),runif(100))), c(3,4))
+// [[Rcpp::export]]
+Rcpp::NumericVector p_mat_dist(Rcpp::NumericMatrix mat,
+                               Rcpp::NumericVector p,
+                               int nthreads = 0) {
+
+  int n = mat.nrow();
+  int d = mat.ncol();
+
+  if (p.size() != d) {
+    Rcpp::stop("Length of p must match number of columns of mat.");
+  }
+  if (nthreads < 1) {
+    #ifdef _OPENMP
+  nthreads = omp_get_max_threads();
+  #else
+    nthreads = 1;
+  #endif
+  }
+  Rcpp::NumericVector out(n);
+
+  #ifdef _OPENMP
+    #pragma omp parallel for num_threads(nthreads)
+  #endif
+  for (int i = 0; i < n; i++) {
+
+    double sum_sq = 0.0;
+
+    for (int j = 0; j < d; j++) {
+      double diff = mat(i, j) - p[j];
+      sum_sq += diff * diff;
+    }
+
+    out[i] = std::sqrt(sum_sq);
   }
 
   return out;
